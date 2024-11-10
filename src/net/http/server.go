@@ -3437,6 +3437,7 @@ func (s *Server) protocols() Protocols {
 	return p
 }
 
+
 // adjustNextProtos adds or removes "http/1.1" and "h2" entries from
 // a tls.Config.NextProtos list, according to the set of protocols in protos.
 func adjustNextProtos(nextProtos []string, protos Protocols) []string {
