@@ -3866,6 +3866,7 @@ type initALPNRequest struct {
 	h   serverHandler
 }
 
+
 // BaseContext is an exported but unadvertised [http.Handler] method
 // recognized by x/net/http2 to pass down a context; the TLSNextProto
 // API predates context support so we shoehorn through the only
