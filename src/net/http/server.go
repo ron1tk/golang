@@ -3873,6 +3873,7 @@ type initALPNRequest struct {
 // interface we have available.
 func (h initALPNRequest) BaseContext() context.Context { return h.ctx }
 
+
 func (h initALPNRequest) ServeHTTP(rw ResponseWriter, req *Request) {
 	if req.TLS == nil {
 		req.TLS = &tls.ConnectionState{}
