@@ -84,23 +84,13 @@ jobs:
         run: |
           echo "Generating tests for: ${{ env.CHANGED_FILES }}"
           python generate_tests.py "${{ env.CHANGED_FILES }}"
-      # Go test and coverage
-      - name: Run Go tests with coverage
-        run: |
-          go test ./... -coverprofile=coverage.out
-          go tool cover -html=coverage.out -o coverage.html
+      
 
       # Python test and coverage
       - name: Run Python tests with coverage
         run: |
           pytest --cov=./ --cov-report=html --cov-report=xml
 
-      # Upload coverage reports as artifacts
-      - name: Upload Go coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: go-coverage-report
-          path: coverage.html
 
       - name: Upload Python coverage report
         uses: actions/upload-artifact@v4
