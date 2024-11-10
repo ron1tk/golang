@@ -3430,7 +3430,16 @@ func (s *Server) protocols() Protocols {
 	}
 
 
+
+
+
+
+
+
+
+
 	
+
 	var p Protocols
 	p.SetHTTP1(true) // default always includes HTTP/1
 	if !http2Disabled {
