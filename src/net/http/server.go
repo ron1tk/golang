@@ -3445,6 +3445,15 @@ func (s *Server) protocols() Protocols {
 
 
 
+
+
+
+
+
+
+
+
+
 // adjustNextProtos adds or removes "http/1.1" and "h2" entries from
 // a tls.Config.NextProtos list, according to the set of protocols in protos.
 func adjustNextProtos(nextProtos []string, protos Protocols) []string {
@@ -3459,6 +3468,11 @@ func adjustNextProtos(nextProtos []string, protos Protocols) []string {
 		case "h2":
 			if !protos.HTTP2() {
 				return true
+
+
+
+
+				
 			}
 			have.SetHTTP2(true)
 		}
