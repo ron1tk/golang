@@ -3429,6 +3429,8 @@ func (s *Server) protocols() Protocols {
 		http2Disabled = true
 	}
 
+
+	
 	var p Protocols
 	p.SetHTTP1(true) // default always includes HTTP/1
 	if !http2Disabled {
@@ -3472,7 +3474,7 @@ func adjustNextProtos(nextProtos []string, protos Protocols) []string {
 
 
 
-				
+
 			}
 			have.SetHTTP2(true)
 		}
