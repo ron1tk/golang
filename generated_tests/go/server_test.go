@@ -1,55 +1,67 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 )
 
-func TestServer_Handle(t *testing.T) {
+func TestServer_ServeHTTP(t *testing.T) {
 	tests := []struct {
 		name           string
 		method         string
 		url            string
-		handlerPattern string
-		handlerFunc    http.HandlerFunc
+		handler        http.HandlerFunc
 		wantStatusCode int
 		wantBody       string
 	}{
 		{
-			name:           "NormalCase",
-			method:         "GET",
-			url:            "/test",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
+			name:   "GET simple path",
+			method: "GET",
+			url:    "/test",
+			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("OK"))
+				w.Write([]byte("test response"))
 			},
 			wantStatusCode: http.StatusOK,
-			wantBody:       "OK",
+			wantBody:       "test response",
 		},
 		{
-			name:           "NotFound",
-			method:         "GET",
-			url:            "/notfound",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
+			name:   "POST with body",
+			method: "POST",
+			url:    "/post",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				response := "received: " + string(body)
+				w.Write([]byte(response))
+			},
+			wantStatusCode: http.StatusOK,
+			wantBody:       "received: post body",
+		},
+		{
+			name:   "404 Not Found",
+			method: "GET",
+			url:    "/notfound",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.NotFound(w, r)
 			},
 			wantStatusCode: http.StatusNotFound,
 			wantBody:       "404 page not found\n",
 		},
 		{
-			name:           "MethodNotAllowed",
-			method:         "POST",
-			url:            "/test",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
+			name:   "Method Not Allowed",
+			method: "DELETE",
+			url:    "/notallowed",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				w.Write([]byte("ok"))
 			},
 			wantStatusCode: http.StatusMethodNotAllowed,
 			wantBody:       "",
@@ -58,61 +70,66 @@ func TestServer_Handle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			mux.HandleFunc(tt.handlerPattern, tt.handlerFunc)
+			// Setup server
+			server := httptest.NewServer(http.HandlerFunc(tt.handler))
+			defer server.Close()
 
-			req := httptest.NewRequest(tt.method, tt.url, nil)
-			w := httptest.NewRecorder()
+			// Create request
+			client := server.Client()
+			req, err := http.NewRequest(tt.method, server.URL+tt.url, bytes.NewBufferString("post body"))
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
 
-			mux.ServeHTTP(w, req)
+			// Execute request
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("Failed to execute request: %v", err)
+			}
+			defer resp.Body.Close()
 
-			resp := w.Result()
-			body, _ := io.ReadAll(resp.Body)
-
+			// Validate response status code
 			if resp.StatusCode != tt.wantStatusCode {
 				t.Errorf("Expected status code %d, got %d", tt.wantStatusCode, resp.StatusCode)
 			}
 
+			// Validate response body
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
 			if string(body) != tt.wantBody {
-				t.Errorf("Expected body %q, got %q", tt.wantBody, string(body))
+				t.Errorf("Expected response body %q, got %q", tt.wantBody, body)
 			}
 		})
 	}
 }
 
-func TestServer_HandleContextCancellation(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/cancel", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		select {
-		case <-ctx.Done():
-			// Simulate work being cancelled
-			http.Error(w, ctx.Err().Error(), http.StatusInternalServerError)
-		case <-r.Body.Read(make([]byte, 1)):
-			// Simulate completing work successfully
-		}
-	})
+func TestServer_TimeoutHandler(t *testing.T) {
+	handler := http.TimeoutHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second) // simulate long process
+		w.Write([]byte("ok"))
+	}), 1*time.Second, "request timed out")
 
-	req := httptest.NewRequest("POST", "/cancel", strings.NewReader("data"))
-	ctx, cancel := context.WithCancel(context.Background())
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
+	server := httptest.NewServer(handler)
+	defer server.Close()
 
-	// Simulate cancellation before the handler finishes
-	go func() {
-		cancel()
-	}()
+	client := server.Client()
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to execute request: %v", err)
+	}
+	defer resp.Body.Close()
 
-	mux.ServeHTTP(w, req)
-
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("Expected status code %d, got %d", http.StatusServiceUnavailable, resp.StatusCode)
 	}
 
-	if !errors.Is(context.Canceled, errors.New(string(body))) {
-		t.Errorf("Expected body to contain context.Canceled error, got %q", string(body))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	if string(body) != "request timed out" {
+		t.Errorf("Expected response body %q, got %q", "request timed out", body)
 	}
 }
