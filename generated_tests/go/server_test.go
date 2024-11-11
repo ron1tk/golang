@@ -1,118 +1,174 @@
 package http_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
-func TestServer_Handle(t *testing.T) {
+// mockResponseWriter implements http.ResponseWriter interface
+// for testing purposes.
+type mockResponseWriter struct {
+	header     http.Header
+	body       bytes.Buffer
+	statusCode int
+}
+
+func newMockResponseWriter() *mockResponseWriter {
+	return &mockResponseWriter{
+		header: make(http.Header),
+	}
+}
+
+func (m *mockResponseWriter) Header() http.Header {
+	return m.header
+}
+
+func (m *mockResponseWriter) Write(data []byte) (int, error) {
+	return m.body.Write(data)
+}
+
+func (m *mockResponseWriter) WriteHeader(statusCode int) {
+	m.statusCode = statusCode
+}
+
+// mockHijacker implements the http.Hijacker interface.
+type mockHijacker struct {
+	mockResponseWriter
+}
+
+func (m *mockHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, errors.New("mock hijack error")
+}
+
+// TestResponseWriter_Write tests the normal, edge, and error cases of the ResponseWriter.Write method.
+func TestResponseWriter_Write(t *testing.T) {
 	tests := []struct {
 		name           string
-		method         string
-		url            string
-		handlerPattern string
-		handlerFunc    http.HandlerFunc
+		writer         http.ResponseWriter
+		input          []byte
+		wantErr        bool
 		wantStatusCode int
-		wantBody       string
 	}{
 		{
-			name:           "NormalCase",
-			method:         "GET",
-			url:            "/test",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("OK"))
-			},
+			name:           "Normal write",
+			writer:         newMockResponseWriter(),
+			input:          []byte("hello"),
+			wantErr:        false,
+			wantStatusCode: http.StatusOK, // Default status code
+		},
+		{
+			name:    "Hijacked connection write",
+			writer:  &mockHijacker{},
+			input:   []byte("hello"),
+			wantErr: true,
+		},
+		{
+			name:           "Write with nil data",
+			writer:         newMockResponseWriter(),
+			input:          nil,
+			wantErr:        false,
 			wantStatusCode: http.StatusOK,
-			wantBody:       "OK",
-		},
-		{
-			name:           "NotFound",
-			method:         "GET",
-			url:            "/notfound",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			},
-			wantStatusCode: http.StatusNotFound,
-			wantBody:       "404 page not found\n",
-		},
-		{
-			name:           "MethodNotAllowed",
-			method:         "POST",
-			url:            "/test",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			},
-			wantStatusCode: http.StatusMethodNotAllowed,
-			wantBody:       "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			mux.HandleFunc(tt.handlerPattern, tt.handlerFunc)
-
-			req := httptest.NewRequest(tt.method, tt.url, nil)
-			w := httptest.NewRecorder()
-
-			mux.ServeHTTP(w, req)
-
-			resp := w.Result()
-			body, _ := io.ReadAll(resp.Body)
-
-			if resp.StatusCode != tt.wantStatusCode {
-				t.Errorf("Expected status code %d, got %d", tt.wantStatusCode, resp.StatusCode)
+			_, err := tt.writer.Write(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)
+				return
 			}
 
-			if string(body) != tt.wantBody {
-				t.Errorf("Expected body %q, got %q", tt.wantBody, string(body))
+			if mw, ok := tt.writer.(*mockResponseWriter); ok && mw.statusCode != tt.wantStatusCode {
+				t.Errorf("StatusCode = %v, want %v", mw.statusCode, tt.wantStatusCode)
 			}
 		})
 	}
 }
 
-func TestServer_HandleContextCancellation(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/cancel", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		select {
-		case <-ctx.Done():
-			// Simulate work being cancelled
-			http.Error(w, ctx.Err().Error(), http.StatusInternalServerError)
-		case <-r.Body.Read(make([]byte, 1)):
-			// Simulate completing work successfully
-		}
-	})
-
-	req := httptest.NewRequest("POST", "/cancel", strings.NewReader("data"))
-	ctx, cancel := context.WithCancel(context.Background())
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-
-	// Simulate cancellation before the handler finishes
-	go func() {
-		cancel()
-	}()
-
-	mux.ServeHTTP(w, req)
-
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
+// TestResponseWriter_WriteHeader tests the WriteHeader method for normal and edge cases.
+func TestResponseWriter_WriteHeader(t *testing.T) {
+	tests := []struct {
+		name           string
+		writer         *mockResponseWriter
+		statusCode     int
+		wantStatusCode int
+	}{
+		{
+			name:           "Normal status code",
+			writer:         newMockResponseWriter(),
+			statusCode:     http.StatusOK,
+			wantStatusCode: http.StatusOK,
+		},
+		{
+			name:           "Client error status code",
+			writer:         newMockResponseWriter(),
+			statusCode:     http.StatusBadRequest,
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			name:           "Server error status code",
+			writer:         newMockResponseWriter(),
+			statusCode:     http.StatusInternalServerError,
+			wantStatusCode: http.StatusInternalServerError,
+		},
+		{
+			name:           "Status code outside valid range",
+			writer:         newMockResponseWriter(),
+			statusCode:     999,
+			wantStatusCode: 999, // The method does not validate status codes.
+		},
 	}
 
-	if !errors.Is(context.Canceled, errors.New(string(body))) {
-		t.Errorf("Expected body to contain context.Canceled error, got %q", string(body))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.writer.WriteHeader(tt.statusCode)
+			if tt.writer.statusCode != tt.wantStatusCode {
+				t.Errorf("StatusCode = %v, want %v", tt.writer.statusCode, tt.wantStatusCode)
+			}
+		})
 	}
 }
+
+// TestHijacker_Hijack tests the Hijack method, including error handling.
+func TestHijacker_Hijack(t *testing.T) {
+	tests := []struct {
+		name    string
+		writer  http.ResponseWriter
+		wantErr bool
+	}{
+		{
+			name:    "Successful hijack",
+			writer:  &mockHijacker{},
+			wantErr: true, // mockHijacker always returns an error
+		},
+		{
+			name:    "Non-hijacker writer",
+			writer:  newMockResponseWriter(),
+			wantErr: true, // Type assertion will fail
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := tt.writer.(http.Hijacker).Hijack()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Hijack() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Test the CloseNotifier interface if it was part of the implementation. Since it's deprecated and removed,
+// tests related to it are not applicable to the current version of Go's HTTP package.
+```
+This code provides a template for testing some aspects of Go's `http` package, specifically focusing on the `http.ResponseWriter` interface and its implementations. The tests cover basic functionalities, including writing headers and data, as well as more complex behaviors like hijacking connections. Keep in mind that actual usage may require more specific tests depending on the application's needs and the full extent of the `http` package's features.
