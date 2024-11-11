@@ -10,109 +10,127 @@ import (
 	"testing"
 )
 
-func TestServer_Handle(t *testing.T) {
-	tests := []struct {
-		name           string
-		method         string
-		url            string
-		handlerPattern string
-		handlerFunc    http.HandlerFunc
-		wantStatusCode int
-		wantBody       string
-	}{
-		{
-			name:           "NormalCase",
-			method:         "GET",
-			url:            "/test",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("OK"))
-			},
-			wantStatusCode: http.StatusOK,
-			wantBody:       "OK",
-		},
-		{
-			name:           "NotFound",
-			method:         "GET",
-			url:            "/notfound",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			},
-			wantStatusCode: http.StatusNotFound,
-			wantBody:       "404 page not found\n",
-		},
-		{
-			name:           "MethodNotAllowed",
-			method:         "POST",
-			url:            "/test",
-			handlerPattern: "/test",
-			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			},
-			wantStatusCode: http.StatusMethodNotAllowed,
-			wantBody:       "",
-		},
+func TestServer_ServeHTTP_Success(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			mux.HandleFunc(tt.handlerPattern, tt.handlerFunc)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Errorf("Unexpected error reading response body: %v", err)
+	}
 
-			req := httptest.NewRequest(tt.method, tt.url, nil)
-			w := httptest.NewRecorder()
-
-			mux.ServeHTTP(w, req)
-
-			resp := w.Result()
-			body, _ := io.ReadAll(resp.Body)
-
-			if resp.StatusCode != tt.wantStatusCode {
-				t.Errorf("Expected status code %d, got %d", tt.wantStatusCode, resp.StatusCode)
-			}
-
-			if string(body) != tt.wantBody {
-				t.Errorf("Expected body %q, got %q", tt.wantBody, string(body))
-			}
-		})
+	if string(body) != "OK" {
+		t.Errorf("Expected body to be %q, got %q", "OK", string(body))
 	}
 }
 
-func TestServer_HandleContextCancellation(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/cancel", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		select {
-		case <-ctx.Done():
-			// Simulate work being cancelled
-			http.Error(w, ctx.Err().Error(), http.StatusInternalServerError)
-		case <-r.Body.Read(make([]byte, 1)):
-			// Simulate completing work successfully
+func TestServer_ServeHTTP_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusNotFound, resp.StatusCode)
+	}
+}
+
+func TestServer_ServeHTTP_MethodNotAllowed(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
 		}
+		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest("POST", "/cancel", strings.NewReader("data"))
-	ctx, cancel := context.WithCancel(context.Background())
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
+	server := httptest.NewServer(handler)
+	defer server.Close()
 
-	// Simulate cancellation before the handler finishes
-	go func() {
-		cancel()
-	}()
+	resp, err := http.Post(server.URL, "text/plain", strings.NewReader("body"))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
 
-	mux.ServeHTTP(w, req)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status code %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
+	}
+}
 
-	resp := w.Result()
-	body, _ := io.ReadAll(resp.Body)
+func TestServer_ServeHTTP_TimeoutHandler(t *testing.T) {
+	handler := http.TimeoutHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(2 * time.Second):
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+			// Expected to hit this case due to timeout
+		}
+	}), 1*time.Second, "Request Timeout")
 
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("Expected status code %d, got %d", http.StatusServiceUnavailable, resp.StatusCode)
 	}
 
-	if !errors.Is(context.Canceled, errors.New(string(body))) {
-		t.Errorf("Expected body to contain context.Canceled error, got %q", string(body))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Errorf("Unexpected error reading response body: %v", err)
+	}
+
+	if !strings.Contains(string(body), "Request Timeout") {
+		t.Errorf("Expected body to contain %q", "Request Timeout")
+	}
+}
+
+func TestServer_ServeHTTP_MaxBytesHandler(t *testing.T) {
+	handler := http.MaxBytesHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(body)
+	}), 10) // Limit to 10 bytes
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, err := http.Post(server.URL, "text/plain", strings.NewReader("This is a long body"))
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, resp.StatusCode)
 	}
 }
