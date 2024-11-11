@@ -2530,6 +2530,10 @@ type ServeMux struct {
 
 
 
+
+
+
+
 // NewServeMux allocates and returns a new [ServeMux].
 func NewServeMux() *ServeMux {
 	return &ServeMux{}
