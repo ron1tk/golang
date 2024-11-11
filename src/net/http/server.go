@@ -2511,6 +2511,10 @@ type ServeMux struct {
 	mux121 serveMux121 // used only when GODEBUG=httpmuxgo121=1
 }
 
+
+
+
+
 // NewServeMux allocates and returns a new [ServeMux].
 func NewServeMux() *ServeMux {
 	return &ServeMux{}
