@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,7 +11,8 @@ import (
 	"testing"
 )
 
-func TestServer_Handle(t *testing.T) {
+// TestServer_Handle_SuccessCases tests the successful handling of different HTTP methods and patterns.
+func TestServer_Handle_SuccessCases(t *testing.T) {
 	tests := []struct {
 		name           string
 		method         string
@@ -21,22 +23,72 @@ func TestServer_Handle(t *testing.T) {
 		wantBody       string
 	}{
 		{
-			name:           "NormalCase",
+			name:           "GetRequest_Success",
 			method:         "GET",
-			url:            "/test",
-			handlerPattern: "/test",
+			url:            "/success",
+			handlerPattern: "/success",
 			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("OK"))
+				_, _ = w.Write([]byte("Success"))
 			},
 			wantStatusCode: http.StatusOK,
-			wantBody:       "OK",
+			wantBody:       "Success",
 		},
 		{
-			name:           "NotFound",
+			name:           "PostRequest_Success",
+			method:         "POST",
+			url:            "/create",
+			handlerPattern: "/create",
+			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte("Created"))
+			},
+			wantStatusCode: http.StatusCreated,
+			wantBody:       "Created",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc(tt.handlerPattern, tt.handlerFunc)
+
+			req := httptest.NewRequest(tt.method, tt.url, nil)
+			w := httptest.NewRecorder()
+
+			mux.ServeHTTP(w, req)
+
+			resp := w.Result()
+			body, _ := io.ReadAll(resp.Body)
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatusCode {
+				t.Errorf("Expected status code %d, got %d", tt.wantStatusCode, resp.StatusCode)
+			}
+
+			if string(body) != tt.wantBody {
+				t.Errorf("Expected body %q, got %q", tt.wantBody, string(body))
+			}
+		})
+	}
+}
+
+// TestServer_Handle_ErrorCases tests the handling of errors such as not found or method not allowed.
+func TestServer_Handle_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		url            string
+		handlerPattern string
+		handlerFunc    http.HandlerFunc
+		wantStatusCode int
+		wantBody       string
+	}{
+		{
+			name:           "PageNotFound",
 			method:         "GET",
-			url:            "/notfound",
-			handlerPattern: "/test",
+			url:            "/does-not-exist",
+			handlerPattern: "/exists",
 			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			},
@@ -45,9 +97,9 @@ func TestServer_Handle(t *testing.T) {
 		},
 		{
 			name:           "MethodNotAllowed",
-			method:         "POST",
-			url:            "/test",
-			handlerPattern: "/test",
+			method:         "DELETE",
+			url:            "/create",
+			handlerPattern: "/create",
 			handlerFunc: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			},
@@ -68,6 +120,7 @@ func TestServer_Handle(t *testing.T) {
 
 			resp := w.Result()
 			body, _ := io.ReadAll(resp.Body)
+			defer resp.Body.Close()
 
 			if resp.StatusCode != tt.wantStatusCode {
 				t.Errorf("Expected status code %d, got %d", tt.wantStatusCode, resp.StatusCode)
@@ -80,16 +133,17 @@ func TestServer_Handle(t *testing.T) {
 	}
 }
 
+// TestServer_HandleContextCancellation tests the server's ability to handle request context cancellation.
 func TestServer_HandleContextCancellation(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cancel", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		select {
 		case <-ctx.Done():
-			// Simulate work being cancelled
-			http.Error(w, ctx.Err().Error(), http.StatusInternalServerError)
-		case <-r.Body.Read(make([]byte, 1)):
-			// Simulate completing work successfully
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(ctx.Err().Error()))
+		case <-time.After(100 * time.Millisecond):
+			w.WriteHeader(http.StatusOK)
 		}
 	})
 
@@ -98,21 +152,21 @@ func TestServer_HandleContextCancellation(t *testing.T) {
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 
-	// Simulate cancellation before the handler finishes
-	go func() {
-		cancel()
-	}()
+	// Cancel the context before the handler has a chance to finish
+	cancel()
 
 	mux.ServeHTTP(w, req)
 
 	resp := w.Result()
 	body, _ := io.ReadAll(resp.Body)
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, resp.StatusCode)
 	}
 
-	if !errors.Is(context.Canceled, errors.New(string(body))) {
-		t.Errorf("Expected body to contain context.Canceled error, got %q", string(body))
+	expectedError := context.Canceled.Error()
+	if !strings.Contains(string(body), expectedError) {
+		t.Errorf("Expected body to contain %q error, got %q", expectedError, string(body))
 	}
 }
