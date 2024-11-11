@@ -16,10 +16,10 @@ logging.basicConfig(
 class TestGenerator:
     def __init__(self):
         self.api_key = os.getenv('OPENAI_API_KEY')
-        self.model = os.getenv('OPENAI_MODEL', 'o1-preview')
+        self.model = os.getenv('OPENAI_MODEL', 'o1-previdew')
         
         try:
-            self.max_tokens = int(os.getenv('OPENAI_MAX_TOKENS', '10000'))
+            self.max_tokens = int(os.getenv('OPENAI_MAX_TOKENS', '100000'))
         except ValueError:
             logging.error("Invalid value for OPENAI_MAX_TOKENS. Using default value: 2000")
             self.max_tokens = 2000
