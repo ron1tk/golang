@@ -1116,6 +1116,7 @@ func (c *conn) readRequest(ctx context.Context) (w *response, err error) {
 	return w, nil
 }
 
+
 // http1ServerSupportsRequest reports whether Go's HTTP/1.x server
 // supports the given request.
 func http1ServerSupportsRequest(req *Request) bool {
