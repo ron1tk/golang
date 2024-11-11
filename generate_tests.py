@@ -16,7 +16,7 @@ logging.basicConfig(
 class TestGenerator:
     def __init__(self):
         self.api_key = os.getenv('OPENAI_API_KEY')
-        self.model = os.getenv('OPENAI_MODEL', 'gpt-4-turbo-preview')
+        self.model = os.getenv('OPENAI_MODEL', 'o1-mini')
         
         try:
             self.max_tokens = int(os.getenv('OPENAI_MAX_TOKENS', '10000'))
