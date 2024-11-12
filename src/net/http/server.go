@@ -459,6 +459,7 @@ type response struct {
 	// "Connection: keep-alive" response header and a
 	// Content-Length.
 	closeAfterReply bool
+	
 
 	// When fullDuplex is false (the default), we consume any remaining
 	// request body before starting to write a response.
@@ -3630,7 +3631,7 @@ func (s *Server) setupHTTP2_ServeTLS() error {
 	s.nextProtoOnce.Do(s.onceSetNextProtoDefaults)
 	return s.nextProtoErr
 
-	
+
 }
 
 // setupHTTP2_Serve is called from (*Server).Serve and conditionally
