@@ -3616,7 +3616,7 @@ func (s *Server) ListenAndServeTLS(certFile, keyFile string) error {
 	if err != nil {
 		return err
 	}
-	
+
 
 	defer ln.Close()
 
@@ -3629,6 +3629,8 @@ func (s *Server) ListenAndServeTLS(certFile, keyFile string) error {
 func (s *Server) setupHTTP2_ServeTLS() error {
 	s.nextProtoOnce.Do(s.onceSetNextProtoDefaults)
 	return s.nextProtoErr
+
+	
 }
 
 // setupHTTP2_Serve is called from (*Server).Serve and conditionally
