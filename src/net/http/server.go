@@ -459,6 +459,7 @@ type response struct {
 	// "Connection: keep-alive" response header and a
 	// Content-Length.
 	closeAfterReply bool
+
 	
 
 	// When fullDuplex is false (the default), we consume any remaining
